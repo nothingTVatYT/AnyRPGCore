@@ -501,15 +501,19 @@ namespace AnyRPG {
                                         currentAction.destinationIsCorrected = true;
                                     }
                                     if (!unitController.UseAgent) {
-                                        unitController.UnFreezeCharacter();
+                                        unitController.FreezeRotation();
                                         unitController.NavMeshAgent.enabled = true;
                                         unitController.RigidBody.isKinematic = true;
+                                        unitController.RigidBody.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
                                     }
                                     if (unitController.NavMeshAgent.enabled && unitController.NavMeshAgent.isOnNavMesh) {
                                         unitController.NavMeshAgent.SetDestination(currentAction.destination);
                                         lastCommandFrame = Time.frameCount;
                                     }
                                 }
+                                //if (unitController.UnitControllerMode != UnitControllerMode.AI) {
+                                    Debug.Log("current velocity: " + unitController.NavMeshAgent.velocity + " of " + unitController.UnitControllerMode);
+                                //}
                             }
                         }
                     } else {
