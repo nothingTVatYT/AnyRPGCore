@@ -448,9 +448,9 @@ namespace AnyRPG {
                 return;
             }
             UnitMotorAction currentAction = microActions.Peek();
-            if (unitController.UnitControllerMode == UnitControllerMode.Player) {
+            //if (unitController.UnitControllerMode == UnitControllerMode.Player) {
                 Debug.Log("Running micro action: " + currentAction);
-            }
+            //}
             Vector3 currentLocation = unitController.transform.position;
             Quaternion currentRotation = unitController.transform.rotation;
 
@@ -491,7 +491,11 @@ namespace AnyRPG {
                                 ResetPath();
                                 currentAction.step++;
                             } else {
-                                if (unitController.NavMeshAgent.pathPending == false && unitController.NavMeshAgent.hasPath == false) {
+                                if (!unitController.NavMeshAgent.pathPending && !unitController.NavMeshAgent.hasPath) {
+                                    if (unitController.NavMeshAgent.pathStatus == UnityEngine.AI.NavMeshPathStatus.PathInvalid) {
+                                        // this can happen when patrol is set to random and a destination on a non-connected navmesh is picked
+                                        microActionDone = true;
+                                    }
                                     if (!currentAction.destinationIsCorrected) {
                                         currentAction.destination = CorrectedNavmeshPosition(currentAction.destination, -1);
                                         currentAction.destinationIsCorrected = true;
@@ -501,7 +505,7 @@ namespace AnyRPG {
                                         unitController.NavMeshAgent.enabled = true;
                                         unitController.RigidBody.isKinematic = true;
                                     }
-                                    if (unitController.NavMeshAgent.enabled == true && unitController.NavMeshAgent.isOnNavMesh == true) {
+                                    if (unitController.NavMeshAgent.enabled && unitController.NavMeshAgent.isOnNavMesh) {
                                         unitController.NavMeshAgent.SetDestination(currentAction.destination);
                                         lastCommandFrame = Time.frameCount;
                                     }
