@@ -1148,6 +1148,8 @@ namespace AnyRPG {
                 if (UnitMotor != null) {
                     UnitMotor.MovementSpeed = MovementSpeed;
                     UnitMotor.ResetPath();
+                    // clear the micro action queue
+                    UnitMotor.Stop();
                 } else {
                     //Debug.Log(gameObject.name + ".AIController.Reset(): characterUnit.BaseCharacter.myanimatedunit was null!");
                 }

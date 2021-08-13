@@ -1,4 +1,5 @@
-using AnyRPG;
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -16,6 +17,39 @@ namespace AnyRPG {
         protected float navMeshDistancePadding = 0.1f;
 
         private UnitController unitController;
+
+        protected class UnitMotorAction {
+            public enum ActionType { WalkTo, TeleportTo, RotateSmoothTo, RotateTo }
+            public ActionType actionType;
+            // the target to walk/teleport to or look to for rotation
+            public Vector3 destination;
+            // the distance we consider close enough to the target
+            public float maxDistance;
+            public int step = 0;
+            public bool destinationIsCorrected = false;
+            public UnitMotorAction(ActionType actionType, Vector3 destination, float maxDistance, bool isCorrected = false) {
+                this.actionType = actionType;
+                this.destination = destination;
+                this.maxDistance = maxDistance > 0 ? maxDistance : distanceTolerance;
+                this.destinationIsCorrected = isCorrected;
+            }
+            public UnitMotorAction(ActionType actionType, Vector3 destination) {
+                this.actionType = actionType;
+                this.destination = destination;
+                this.maxDistance = distanceTolerance;
+            }
+            public override string ToString() {
+                return string.Format("UnitMotorAction({0}, {1}, {2})", actionType.ToString(), destination, maxDistance);
+            }
+        }
+
+        private Queue<UnitMotorAction> microActions = new Queue<UnitMotorAction>();
+
+        protected float rotationSpeed = 80f;
+        // tolerance in degrees for two rotation angles are considered close enough
+        protected float angleTolerance = 1f;
+        // tolerance for two positions to be considered close enough
+        protected static float distanceTolerance = 0.05f;
 
         // default value meant to be overwritten by a controller (AI/player)
         protected float movementSpeed = 0f;
@@ -84,7 +118,8 @@ namespace AnyRPG {
                 */
                 return;
             }
-            CheckSetMoveDestination();
+            // no longer needed and it was called in FixdUpdate as well?
+            //CheckSetMoveDestination();
         }
 
         protected void CheckSetMoveDestination() {
@@ -124,6 +159,9 @@ namespace AnyRPG {
 
         public void FixedUpdate() {
             //Debug.Log(gameObject.name + ".UnitMotor.FixedUpdate(). current location: " + transform.position);
+
+            RunMicroActions();
+
             if (frozen) {
                 return;
             }
@@ -139,7 +177,8 @@ namespace AnyRPG {
                 return;
             }
             */
-                CheckSetMoveDestination();
+                // this is done in RunMicroActions() as long as there are actions
+                //CheckSetMoveDestination();
 
 
                 if (target != null) {
@@ -156,7 +195,9 @@ namespace AnyRPG {
                                 // the target has moved more than 1 hitbox from our destination position, re-adjust heading
                                 if (Time.frameCount != lastResetFrame && Time.frameCount != lastCommandFrame) {
                                     // prevent anything from resetting movement twice in the same frame
-                                    MoveToPoint(target.transform.position);
+                                    // instead of setting a new move position directly let's update the queue
+                                    //MoveToPoint(target.transform.position);
+                                    WalkTo(target.transform.position, unitController.CharacterUnit.HitBoxSize * 2);
                                 }
                             }
                         } else {
@@ -164,11 +205,13 @@ namespace AnyRPG {
                             if (Vector3.Distance(CorrectedNavmeshPosition(target.transform.position), unitController.NavMeshAgent.destination) > (unitController.CharacterUnit.HitBoxSize / 2) && unitController.NavMeshAgent.pathPending == false) {
                                 if (Time.frameCount != lastResetFrame && Time.frameCount != lastCommandFrame) {
                                     // prevent anything from resetting movement twice in the same frame
-                                    MoveToPoint(target.transform.position);
+                                    //MoveToPoint(target.transform.position);
+                                    WalkTo(target.transform.position, unitController.CharacterUnit.HitBoxSize / 2);
                                 }
                             }
                         }
-                        FaceTarget(target);
+                        //FaceTarget(target);
+                        RotateTo(target.transform.position);
                     }
                 } else {
                     //Debug.Log(gameObject.name + ": UnitMotor.FixedUpdate(): TARGET IS NULL!");
@@ -176,7 +219,9 @@ namespace AnyRPG {
                         //Debug.Log(gameObject.name + ": UnitMotor.FixedUpdate(): TARGET IS NULL! moveToDestination: true. current location: " + transform.position + "; destinationPosition: " + destinationPosition + "; unitController.MyAgent.destination: " + unitController.MyAgent.destination + "; pathpending: " + unitController.MyAgent.pathPending);
                         float agentDestinationDrift = Vector3.Distance(destinationPosition, unitController.NavMeshAgent.destination);
                         if (agentDestinationDrift >= (unitController.NavMeshAgent.stoppingDistance + navMeshDistancePadding) && destinationPosition != unitController.NavMeshAgent.destination) {
-                            MoveToPoint(destinationPosition);
+                            //MoveToPoint(destinationPosition);
+                            if (microActions.Count == 0)
+                                WalkTo(destinationPosition, distanceTolerance);
                         } else {
                             //Debug.Log(gameObject.name + ": FixedUpdate() agent.destination: " + unitController.MyAgent.destination + " matches point (within stopping distance): " + destinationPosition + ". Disable moveToDestination boolean");
                             moveToDestination = false;
@@ -340,10 +385,14 @@ namespace AnyRPG {
             // leaving this unset so it gets picked up in the next fixedupdate because navmeshagent doesn't actually reset path until after current frame.
             //unitController.MyAgent.SetDestination(point);
 
+            // this method should not be called inside a micro action or we run in circles
+            WalkToCheckedDestination(destinationPosition, minAttackRange);
+
             //Debug.Log(unitController.gameObject.name + "UnitMotor.MoveToPoint(" + point + "). current location: " + unitController.transform.position + "; frame: " + Time.frameCount + "; return: " + destinationPosition);
             return destinationPosition;
         }
 
+        [ObsoleteAttribute("MoveToPosition method is obsolete. Call WalkTo instead.", true)]
         public void MoveToPosition(Vector3 newPosition) {
             //Debug.Log(gameObject.name + ".UnitMotor.MoveToPosition(" + newPosition + ")");
             if (frozen) {
@@ -353,10 +402,150 @@ namespace AnyRPG {
             BroadcastMovement();
         }
 
+        public void WalkTo(Vector3 newPosition, float maxDistance) {
+            EnqueueNew(new UnitMotorAction(UnitMotorAction.ActionType.WalkTo, newPosition, maxDistance));
+        }
+        public void WalkToCheckedDestination(Vector3 newPosition, float maxDistance) {
+            EnqueueNew(new UnitMotorAction(UnitMotorAction.ActionType.WalkTo, newPosition, maxDistance, true));
+        }
+        public void TeleportTo(Vector3 newPosition, float maxDistance) {
+            EnqueueNew(new UnitMotorAction(UnitMotorAction.ActionType.TeleportTo, newPosition, maxDistance));
+        }
+        public void RotateSmoothTo(Vector3 targetPosition) {
+            EnqueueNew(new UnitMotorAction(UnitMotorAction.ActionType.RotateSmoothTo, targetPosition));
+        }
+        public void RotateTo(Vector3 targetPosition) {
+            EnqueueNew(new UnitMotorAction(UnitMotorAction.ActionType.RotateTo, targetPosition));
+        }
+        public void Stop() {
+            if (microActions.Count > 0) {
+                Debug.Log("actions cleared");
+            }
+            microActions.Clear();
+        }
+
+        protected void EnqueueNew(UnitMotorAction action) {
+            bool isDuplicate = false;
+            if (microActions.Count > 0) {
+                UnitMotorAction currentAction = microActions.Peek();
+                if (currentAction.actionType == action.actionType) {
+                    if ((currentAction.destination - action.destination).magnitude < distanceTolerance) {
+                        isDuplicate = true;
+                        Debug.Log("discard request " + action + " as duplicate to " + currentAction);
+                    }
+                }
+            }
+            if (!isDuplicate) {
+                microActions.Enqueue(action);
+                if (unitController.UnitControllerMode == UnitControllerMode.Player) {
+                    Debug.Log("Queued micro action: " + action);
+                }
+            }
+        }
+
+        protected void RunMicroActions() {
+            if (microActions.Count == 0) {
+                return;
+            }
+            UnitMotorAction currentAction = microActions.Peek();
+            if (unitController.UnitControllerMode == UnitControllerMode.Player) {
+                Debug.Log("Running micro action: " + currentAction);
+            }
+            Vector3 currentLocation = unitController.transform.position;
+            Quaternion currentRotation = unitController.transform.rotation;
+
+            bool microActionDone = false;
+            switch (currentAction.actionType) {
+
+                case UnitMotorAction.ActionType.TeleportTo:
+                    microActionDone = (currentAction.destination - currentLocation).magnitude <= currentAction.maxDistance;
+                    if (!microActionDone) {
+                        if (!frozen) {
+                            if (unitController.UseAgent) {
+                                if (currentAction.step == 0) {
+                                    ResetPath();
+                                    currentAction.step++;
+                                } else {
+                                    if (unitController.NavMeshAgent.pathPending == false && unitController.NavMeshAgent.hasPath == false) {
+                                        if (!currentAction.destinationIsCorrected) {
+                                            currentAction.destination = CorrectedNavmeshPosition(currentAction.destination, -1);
+                                            currentAction.destinationIsCorrected = true;
+                                        }
+                                        unitController.transform.position = currentAction.destination;
+                                    }
+                                }
+                            } else {
+                                unitController.transform.position = currentAction.destination;
+                            }
+                        }
+                        microActionDone = true;
+                    }
+                break;
+
+                case UnitMotorAction.ActionType.WalkTo:
+                    microActionDone = (currentAction.destination - currentLocation).magnitude <= currentAction.maxDistance;
+                    if (!microActionDone) {
+                        if (!frozen) {
+                            unitController.NavMeshAgent.updateRotation = true;
+                            if (currentAction.step == 0) {
+                                ResetPath();
+                                currentAction.step++;
+                            } else {
+                                if (unitController.NavMeshAgent.pathPending == false && unitController.NavMeshAgent.hasPath == false) {
+                                    if (!currentAction.destinationIsCorrected) {
+                                        currentAction.destination = CorrectedNavmeshPosition(currentAction.destination, -1);
+                                        currentAction.destinationIsCorrected = true;
+                                    }
+                                    if (!unitController.UseAgent) {
+                                        unitController.UnFreezeCharacter();
+                                        unitController.NavMeshAgent.enabled = true;
+                                        unitController.RigidBody.isKinematic = true;
+                                    }
+                                    if (unitController.NavMeshAgent.enabled == true && unitController.NavMeshAgent.isOnNavMesh == true) {
+                                        unitController.NavMeshAgent.SetDestination(currentAction.destination);
+                                        lastCommandFrame = Time.frameCount;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if (!unitController.UseAgent) {
+                            unitController.FreezePositionXZ();
+                            unitController.DisableAgent();
+                            unitController.RigidBody.isKinematic = false;
+                        }
+                    }
+                break;
+
+                case UnitMotorAction.ActionType.RotateSmoothTo:
+                    Vector3 destinationXZ = currentAction.destination;
+                    destinationXZ.y = currentLocation.y;
+                    Quaternion rotation = Quaternion.LookRotation(destinationXZ - currentLocation, Vector3.up);
+                    float angleRotateBack = Quaternion.Angle(currentRotation, rotation);
+                    microActionDone = angleRotateBack <= angleTolerance;
+                    if (!microActionDone) {
+                        unitController.transform.rotation = Quaternion.RotateTowards(unitController.transform.rotation, rotation, rotationSpeed * Time.deltaTime);
+                        //Quaternion.Slerp(currentRotation, rotation, rotationSpeed * Time.deltaTime);
+                    }
+                    break;
+
+                case UnitMotorAction.ActionType.RotateTo:
+                    destinationXZ = currentAction.destination;
+                    destinationXZ.y = currentLocation.y;
+                    unitController.transform.rotation = Quaternion.LookRotation(destinationXZ - currentLocation, Vector3.up);
+                    microActionDone = true;
+                break;
+            }
+            if (microActionDone) {
+                microActions.Dequeue();
+            }
+        }
+
         public Vector3 getVelocity() {
             return unitController.NavMeshAgent.velocity;
         }
 
+        // this function is for knockback and player movement so we don't need to use the queue
         public void Move(Vector3 moveDirection, bool isKnockBack = false) {
             //Debug.Log(unitController.gameObject.name + ".UnitMotor.Move(" + moveDirection + "). current position: " + unitController.transform.position);
             if (isKnockBack
@@ -401,6 +590,7 @@ namespace AnyRPG {
             unitController.RigidBody.AddRelativeForce(new Vector3(0, jumpSpeed, 0), ForceMode.VelocityChange);
         }
 
+        [ObsoleteAttribute("Consider using the RotateTo / RotateToSmooth methods instead")]
         public void RotateTowardsTarget(Vector3 targetPosition, float rotationSpeed) {
             //Debug.Log("RotateTowardsMovementTarget()");
             if (frozen) {
@@ -410,6 +600,7 @@ namespace AnyRPG {
             unitController.transform.eulerAngles = Vector3.up * Mathf.MoveTowardsAngle(unitController.transform.eulerAngles.y, targetRotation.eulerAngles.y, (rotationSpeed * Time.deltaTime) * rotationSpeed);
         }
 
+        [ObsoleteAttribute("Consider using the RotateTo / RotateToSmooth methods instead")]
         public void BeginFaceSouthEast() {
             //Debug.Log(gameObject.name + ".UnitMotor.BeginFaceSouthEast()");
             //RotateToward((new Vector3(1, 0, -1)).normalized);
@@ -417,6 +608,7 @@ namespace AnyRPG {
             //Rotate((new Vector3(-1, 0, 1)).normalized);
         }
 
+        [ObsoleteAttribute("Consider using the RotateTo / RotateToSmooth methods instead")]
         public void RotateToward(Vector3 rotateDirection) {
             //Debug.Log(unitController.gameObject.name + ".UnitMotor.RotateToward(): " + rotateDirection);
             if (frozen) {
@@ -434,6 +626,7 @@ namespace AnyRPG {
             }
         }
 
+        // this method is called on the player's input, no need to queue it
         public void Rotate(Vector3 rotateDirection) {
             //Debug.Log(unitController.gameObject.name + ".UnitMotor.Rotate(): " + rotateDirection);
             if (frozen) {
@@ -459,7 +652,8 @@ namespace AnyRPG {
             target = newTarget;
             if (oldTarget == null || (minAttackRange > 0f && currentMaxSampleRadius != minAttackRange)) {
                 //Debug.Log(gameObject.name + ".UnitMotor.FollowTarget(" + (target == null ? "null" : target.name) + ", " + minAttackRange + "): issuing movetopoint. currentradius: " + currentMaxSampleRadius + "; minattack: " + minAttackRange);
-                MoveToPoint(target.transform.position, minAttackRange);
+                //MoveToPoint(target.transform.position, minAttackRange);
+                WalkTo(target.transform.position, minAttackRange);
             } else {
                 //Debug.Log(gameObject.name + ".UnitMotor.FollowTarget(" + (target == null ? "null" : target.name) + ", " + minAttackRange + "): doing nothing.  oldtarget is not null");
             }
@@ -468,6 +662,9 @@ namespace AnyRPG {
 
         public void StopFollowingTarget() {
             //Debug.Log(unitController.gameObject.name + ".UnitMotor.StopFollowingTarget()");
+            if (target != null) {
+                Stop();
+            }
             target = null;
             if (frozen) {
                 return;
@@ -488,10 +685,15 @@ namespace AnyRPG {
             if (frozen) {
                 return;
             }
-            Vector3 direction = (newTarget.transform.position - unitController.transform.position).normalized;
+
+            RotateSmoothTo(newTarget.transform.position);
+
+            /*Vector3 direction = (newTarget.transform.position - unitController.transform.position).normalized;
 
             // prevent turning updward
             direction = new Vector3(direction.x, 0f, direction.z);
+
+
 
             //Quaternion lookRotation = Quaternion.LookRotation(new Vector3(direction.x, 0f, direction.z));
             if (unitController.NavMeshAgent.enabled) {
@@ -503,7 +705,7 @@ namespace AnyRPG {
             }
             if (unitController.NavMeshAgent.enabled) {
                 unitController.NavMeshAgent.updateRotation = true;
-            }
+            }*/
         }
 
         /*
