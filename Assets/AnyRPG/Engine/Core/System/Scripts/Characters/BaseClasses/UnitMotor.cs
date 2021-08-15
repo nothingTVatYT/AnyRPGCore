@@ -232,6 +232,8 @@ namespace AnyRPG {
 
             if (unitController.NavMeshAgent.velocity.sqrMagnitude > 0) {
                 BroadcastMovement();
+                Vector3 vel = (unitController as MonoBehaviour).transform.InverseTransformDirection(unitController.NavMeshAgent.velocity);
+                Debug.Log("set velocity by agent to " + vel + " on " + unitController.UnitAnimator);
                 if (unitController.UnitAnimator != null) {
                     unitController.UnitAnimator.SetMoving(true);
                     unitController.UnitAnimator.SetVelocity((unitController as MonoBehaviour).transform.InverseTransformDirection(unitController.NavMeshAgent.velocity));
@@ -449,7 +451,7 @@ namespace AnyRPG {
             }
             UnitMotorAction currentAction = microActions.Peek();
             //if (unitController.UnitControllerMode == UnitControllerMode.Player) {
-                Debug.Log("Running micro action: " + currentAction);
+                //Debug.Log("Running micro action: " + currentAction);
             //}
             Vector3 currentLocation = unitController.transform.position;
             Quaternion currentRotation = unitController.transform.rotation;
@@ -492,10 +494,10 @@ namespace AnyRPG {
                                 currentAction.step++;
                             } else {
                                 if (!unitController.NavMeshAgent.pathPending && !unitController.NavMeshAgent.hasPath) {
-                                    if (unitController.NavMeshAgent.pathStatus == UnityEngine.AI.NavMeshPathStatus.PathInvalid) {
+                                    //if (unitController.NavMeshAgent.pathStatus == UnityEngine.AI.NavMeshPathStatus.PathInvalid) {
                                         // this can happen when patrol is set to random and a destination on a non-connected navmesh is picked
-                                        microActionDone = true;
-                                    }
+                                        //microActionDone = true;
+                                    //}
                                     if (!currentAction.destinationIsCorrected) {
                                         currentAction.destination = CorrectedNavmeshPosition(currentAction.destination, -1);
                                         currentAction.destinationIsCorrected = true;
@@ -511,13 +513,15 @@ namespace AnyRPG {
                                         lastCommandFrame = Time.frameCount;
                                     }
                                 }
-                                //if (unitController.UnitControllerMode != UnitControllerMode.AI) {
+                                if (unitController.UnitControllerMode != UnitControllerMode.AI) {
                                     Debug.Log("current velocity: " + unitController.NavMeshAgent.velocity + " of " + unitController.UnitControllerMode);
-                                //}
+                                }
                             }
                         }
-                    } else {
+                    }
+                    if (microActionDone) {
                         if (!unitController.UseAgent) {
+                            Debug.Log("Revert changes on agent and rigidbody");
                             unitController.FreezePositionXZ();
                             unitController.DisableAgent();
                             unitController.RigidBody.isKinematic = false;
@@ -545,7 +549,8 @@ namespace AnyRPG {
                 break;
             }
             if (microActionDone) {
-                microActions.Dequeue();
+                UnitMotorAction a = microActions.Dequeue();
+                Debug.Log(a + " is done.");
             }
         }
 
